@@ -1,9 +1,6 @@
 <script setup>
 import { ref, computed, markRaw } from "vue";
-import RangePicker from "@/components/RangePicker.vue";
-import CalendarMonth from "@/components/CalendarMonth.vue";
-import CalendarWeek from "@/components/CalendarWeek.vue";
-import CalendarDay from "@/components/CalendarDay.vue";
+import simpleKeyboard from "@/components/simpleKeyboard.vue";
 
 const selectedRange = ref("Month");
 const selectedDate = ref(new Date());

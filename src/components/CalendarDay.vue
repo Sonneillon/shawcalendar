@@ -148,7 +148,6 @@ export default {
       const uk = `${dd} ${mmmm} ${yyyy}`;
 
       const prefix = this.dayRelation ? `${this.dayRelation}, ` : "";
-      // include weekday for readability (e.g., "Today, Fri 03 10 2025")
       const weekday = d.toLocaleString("en-GB", { weekday: "short" });
       return `${prefix}${weekday} ${uk}`;
     },
@@ -274,7 +273,7 @@ export default {
 }
 h1 {
   font-size: 2.5em;
-  color: white;
+  color: var(--color-text);
   font-weight: bold;
 }
 

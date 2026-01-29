@@ -13,7 +13,7 @@ export function useCalendarBootstrap() {
     return await createCalendarWithOwner({
       uid: user.uid,
       name,
-      timezone: "Europe/Dublin",
+      timezone: "Europe/London",
     });
   }
 

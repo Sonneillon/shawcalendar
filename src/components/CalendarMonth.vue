@@ -1,6 +1,6 @@
 <template>
   <div class="calendar">
-    <div class="calendar-header">
+    <div class="calendarHeader">
       <h1>
         <span>{{ monthName }} {{ year }}</span>
       </h1>
@@ -180,7 +180,7 @@ export default {
   max-width: 100%;
   margin: auto;
 }
-.calendar-header {
+.calendarHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -198,7 +198,7 @@ export default {
 }
 h1 {
   font-size: 2.5em;
-  color: white;
+  color: var(--color-text);
   font-weight: bold;
 }
 table {

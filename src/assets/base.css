@@ -20,7 +20,8 @@
   --vt-c-text-dark-1: var(--vt-c-white);
   --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
 
-  --shaw-colour: rgba(22, 65, 124, 1);
+  --color-shaw: rgba(22, 65, 124, 1);
+  --color-clock: var(--vt-c-white);
 }
 
 /* semantic color variables for this project */

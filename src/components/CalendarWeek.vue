@@ -43,9 +43,7 @@
               :key="day.iso + '-' + slot.isoTime"
               :class="[{ today: day.isToday }, 'slot', { 'slot-hour': slot.isHour }]"
               :data-time="slot.isoTime"
-            >
-              <!-- place events inside these slots if desired -->
-            </td>
+            ></td>
           </tr>
         </tbody>
       </table>
@@ -213,7 +211,7 @@ export default {
 }
 h1 {
   font-size: 2.5em;
-  color: white;
+  color: var(--color-text);
   font-weight: bold;
 }
 

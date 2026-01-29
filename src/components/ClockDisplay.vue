@@ -1,8 +1,8 @@
 <template>
   <div class="clock">
-    <div class="time-row">
-      <h1 class="time-main">{{ hh }}:{{ mm }}</h1>
-      <h3 class="time-sec">{{ ss }}</h3>
+    <div class="timeRow">
+      <h1 class="timeMain">{{ hh }}:{{ mm }}</h1>
+      <h3 class="timeSec">{{ ss }}</h3>
     </div>
     <p class="date">{{ weekday }}, {{ day }} {{ month }}</p>
   </div>
@@ -55,32 +55,32 @@ onUnmounted(() => clearTimeout(timerId));
   grid-column: 1 / -1 !important;
   column-span: all;
   float: none;
+  color: var(--color-clock);
   text-shadow:
-    15px 15px 30px var(--color-background),
-    7px 7px 15px var(--color-background);
+    15px 15px 30px var(--color-shaw),
+    7px 7px 15px var(--color-shaw);
 }
 
-/* Your existing layout */
-.time-row {
+.timeRow {
   display: flex;
   align-items: flex-start;
   gap: 0.25rem;
 }
 
-.time-main,
-.time-sec {
+.timeMain,
+.timeSec {
   margin: 0;
   line-height: 1;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto; /* don't grow to fill */
 }
 
-.time-main {
+.timeMain {
   font-size: clamp(48px, 12vw, 160px);
   font-weight: 700;
 }
 
-.time-sec {
+.timeSec {
   font-size: clamp(16px, 4vw, 48px);
   font-weight: 600;
 }
@@ -90,5 +90,8 @@ onUnmounted(() => clearTimeout(timerId));
   font-size: clamp(14px, 3vw, 32px);
   font-weight: 500;
   text-align: center;
+  text-shadow:
+    15px 15px 30px var(--color-shaw),
+    7px 7px 15px var(--color-shaw);
 }
 </style>

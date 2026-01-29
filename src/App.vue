@@ -1,6 +1,7 @@
 <script setup>
-import ClockDisplay from "./components/ClockDisplay.vue";
 import CalendarView from "./views/CalendarView.vue";
+import NewEventView from "./views/NewEventView.vue";
+import ClockDisplay from "./components/ClockDisplay.vue";
 import CalendarPicture from "./components/CalendarPicture.vue";
 import ShawLogoBlue from "./components/ShawLogo.vue";
 
@@ -44,6 +45,7 @@ async function signIn() {
     </div>
 
     <div class="Layout-Media">
+      <simpleKeyboard />
       <CalendarPicture />
     </div>
 
