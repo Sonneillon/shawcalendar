@@ -13,52 +13,88 @@
     </div>
 
     <!-- Table with sticky header + left time column and scrollable body -->
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <!-- Invisible spacer to keep columns aligned with the time column -->
-            <th class="time-spacer" aria-hidden="true" role="presentation"></th>
+    <div class="table-wrap" ref="wrap">
+      <div class="scroll-content" ref="scrollContent">
+        <table ref="table">
+          <thead ref="thead">
+            <tr>
+              <!-- Invisible spacer to keep columns aligned with the time column -->
+              <th class="time-spacer" aria-hidden="true" role="presentation"></th>
 
-            <!-- Single day header -->
-            <th :class="{ 'today-header': dayInfo.isToday }">
-              <div class="th-wrap">
-                <div class="th-day">{{ dayInfo.weekdayLong }}</div>
-                <div class="th-date">
-                  {{ dayInfo.dayNum }} {{ dayInfo.monthLong }}, {{ dayInfo.year }}
+              <!-- Single day header -->
+              <th :class="{ 'today-header': dayInfo.isToday }">
+                <div class="th-wrap">
+                  <div class="th-day">{{ dayInfo.weekdayLong }}</div>
+                  <div class="th-date">
+                    {{ dayInfo.dayNum }} {{ dayInfo.monthLong }}, {{ dayInfo.year }}
+                  </div>
                 </div>
-              </div>
-            </th>
-          </tr>
-        </thead>
+              </th>
+            </tr>
+          </thead>
 
-        <tbody>
-          <!-- 48 rows of 30-minute slots -->
-          <tr v-for="slot in timeSlots" :key="slot.isoTime">
-            <!-- Left sticky time cell: only label on the hour -->
-            <th class="time-col" :class="{ 'is-hour': slot.isHour }" scope="row">
-              <span v-if="slot.isHour">{{ slot.label }}</span>
-            </th>
+          <tbody ref="tbody">
+            <!-- 48 rows of 30-minute slots -->
+            <tr v-for="slot in timeSlots" :key="slot.isoTime">
+              <!-- Left sticky time cell: only label on the hour -->
+              <th class="time-col" :class="{ 'is-hour': slot.isHour }" scope="row">
+                <span v-if="slot.isHour">{{ slot.label }}</span>
+              </th>
 
-            <!-- One day x 48 row grid cells -->
-            <td
-              :class="['slot', { 'slot-hour': slot.isHour }, { today: dayInfo.isToday }]"
-              :data-time="slot.isoTime"
-              :key="dayInfo.iso + '-' + slot.isoTime"
-            >
-              <!-- place events inside these slots if desired -->
-            </td>
-          </tr>
-        </tbody>
-      </table>
+              <!-- One day x 48 row grid cells -->
+              <td
+                :class="['slot', { 'slot-hour': slot.isHour }, { today: dayInfo.isToday }]"
+                :data-time="slot.isoTime"
+              ></td>
+            </tr>
+          </tbody>
+        </table>
 
-      <!-- Current time line (rounded down to nearest 30) -->
-      <div class="now-line" :style="{ top: nowLineY + 'px' }"></div>
+        <!-- Overlay layer that holds appointments-->
+        <div class="events-layer" aria-label="events">
+          <div
+            v-for="occ in positionedOccurrences"
+            :key="occ.id"
+            class="event-block"
+            :style="occ._style"
+            :title="occ._tooltip"
+            :class="{
+              'is-cancelled': occ.status === 'cancelled',
+              'is-override': !!occ.isOverride,
+            }"
+          >
+            <div class="event-title">{{ occ.title }}</div>
+            <div class="event-time">{{ occ._timeLabel }}</div>
+          </div>
+        </div>
+
+        <!-- Current time line (only when viewing Today) -->
+        <div v-if="dayInfo.isToday" class="now-line" :style="{ top: nowLineY + 'px' }"></div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
+import { collection, query, where, onSnapshot, getDocs, documentId, doc } from "firebase/firestore";
+import { db } from "@/firebase/firebaseClient";
+
+const TIME_SLOTS = (() => {
+  const slots = [];
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const isHour = m === 0;
+      const isoTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+
+      const hour12 = ((h + 11) % 12) + 1;
+      const label = isHour ? `${hour12}${h < 12 ? "am" : "pm"}` : "";
+
+      slots.push({ h, m, isHour, label, isoTime });
+    }
+  }
+  return slots;
+})();
+
 export default {
   name: "DailyCalendar",
 
@@ -67,17 +103,32 @@ export default {
       type: Date,
       default: () => new Date(),
     },
-
     showReturnToMonth: {
       type: Boolean,
       default: false,
     },
   },
+
   data() {
     return {
       currentDate: new Date(),
+
       nowLineY: 0,
       _nowLineTimer: null,
+
+      occurrences: [],
+
+      eventsById: Object.create(null),
+
+      _unsubOccurrences: null,
+
+      _rowHeight: 50,
+      _headerHeight: 60,
+
+      _resizeObs: null,
+
+      _subToken: 0,
+      _isAlive: true,
     };
   },
 
@@ -86,12 +137,7 @@ export default {
       immediate: true,
       handler(newDate) {
         this.currentDate = new Date(newDate);
-        this.$nextTick(() => {
-          if (this.dayInfo.isToday) {
-            this.scrollToNowOffset();
-          }
-          this.updateNowLine();
-        });
+        this.refreshForDateChange({ scrollIfToday: true });
       },
     },
   },
@@ -102,6 +148,13 @@ export default {
       d.setHours(0, 0, 0, 0);
       return d;
     },
+
+    dayEnd() {
+      const d = new Date(this.dayStart);
+      d.setDate(d.getDate() + 1);
+      return d;
+    },
+
     dayRelation() {
       const target = this.dayStart.getTime();
       const today = new Date();
@@ -121,7 +174,6 @@ export default {
       today.setHours(0, 0, 0, 0);
       const isToday = date.getTime() === today.getTime();
 
-      // British numeric: dd mm yyyy
       const dd = String(date.getDate()).padStart(2, "0");
       const mmmm = date.toLocaleString("en-GB", { month: "long" });
       const yyyy = date.getFullYear();
@@ -134,9 +186,9 @@ export default {
         weekdayLong: date.toLocaleString("en-GB", { weekday: "long" }),
         weekdayShort: date.toLocaleString("en-GB", { weekday: "short" }),
         dayNum: date.getDate(),
-        monthLong: date.toLocaleString("en-GB", { month: "long" }), // kept in case you use it elsewhere
+        monthLong: date.toLocaleString("en-GB", { month: "long" }),
         year: yyyy,
-        ukDate, // <-- used by the header cell
+        ukDate,
       };
     },
 
@@ -153,98 +205,348 @@ export default {
     },
 
     timeSlots() {
-      const slots = [];
-      for (let h = 0; h < 24; h++) {
-        for (let m = 0; m < 60; m += 30) {
-          const isHour = m === 0;
-          const date = new Date(2000, 0, 1, h, m);
-          const label = isHour
-            ? date.toLocaleTimeString("en-GB", { hour: "numeric", hour12: true })
-            : "";
-          const isoTime = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-          slots.push({ h, m, isHour, label, isoTime });
-        }
-      }
-      return slots;
+      return TIME_SLOTS;
+    },
+
+    positionedOccurrences() {
+      const pxPerMinute = this._rowHeight / 30;
+      const dayStartTs = this.dayStart.getTime();
+      const dayEndTs = this.dayEnd.getTime();
+
+      const base = this.occurrences.map((o) => {
+        const start = o._start ?? this.toDate(o.startAt);
+        const end = o._end ?? this.toDate(o.endAt);
+
+        const startTs = Math.max(start.getTime(), dayStartTs);
+        const endTs = Math.min(end.getTime(), dayEndTs);
+
+        const startMins = (startTs - dayStartTs) / 60000;
+        const endMins = (endTs - dayStartTs) / 60000;
+
+        return {
+          ...o,
+          _start: start,
+          _end: end,
+          _startMins: startMins,
+          _endMins: endMins,
+        };
+      });
+
+      const laidOut = this.layoutOverlaps(base);
+
+      const gutter = 6;
+      return laidOut.map((o) => {
+        const top = o._startMins * pxPerMinute;
+        const height = Math.max(18, (o._endMins - o._startMins) * pxPerMinute);
+
+        const colCount = o._totalCols || 1;
+        const colIndex = o._colIndex || 0;
+
+        const widthPct = 100 / colCount;
+        const leftPct = colIndex * widthPct;
+
+        const title = this.eventsById?.[o.eventId]?.title ?? o.title ?? "(untitled)";
+        const timeLabel = `${this.formatHM(o._start)} - ${this.formatHM(o._end)}`;
+
+        return {
+          ...o,
+          title,
+          _style: {
+            top: `${top}px`,
+            height: `${height}px`,
+            left: `calc(${leftPct}% + ${gutter}px)`,
+            width: `calc(${widthPct}% - ${gutter * 2}px)`,
+          },
+          _timeLabel: timeLabel,
+          _tooltip: `${title}\n${timeLabel}`,
+        };
+      });
     },
   },
+
   methods: {
     goToMonth() {
       this.$emit("go-to-month");
     },
+
+    async refreshForDateChange({ scrollIfToday = true } = {}) {
+      await this.$nextTick();
+      this.measureCalendarGeometry();
+      this.subscribeToDayOccurrences();
+
+      if (this.dayInfo.isToday) {
+        this.updateNowLine();
+        if (scrollIfToday) this.scrollToNowOffset();
+      }
+    },
+
     today() {
       const d = new Date();
       this.currentDate = d;
       this.$emit("update:selectedDate", d);
-
-      this.$nextTick(() => {
-        this.scrollToNowOffset();
-        this.updateNowLine();
-      });
+      this.refreshForDateChange({ scrollIfToday: true });
     },
+
     prevDay() {
       const d = new Date(this.currentDate);
       d.setDate(d.getDate() - 1);
       this.currentDate = d;
       this.$emit("update:selectedDate", d);
-
-      this.$nextTick(() => {
-        if (this.dayInfo.isToday) this.scrollToNowOffset();
-        this.updateNowLine();
-      });
+      this.refreshForDateChange({ scrollIfToday: true });
     },
+
     nextDay() {
       const d = new Date(this.currentDate);
       d.setDate(d.getDate() + 1);
       this.currentDate = d;
       this.$emit("update:selectedDate", d);
-
-      this.$nextTick(() => {
-        if (this.dayInfo.isToday) this.scrollToNowOffset();
-        this.updateNowLine();
-      });
+      this.refreshForDateChange({ scrollIfToday: true });
     },
+
     scrollToNowOffset() {
-      const wrap = this.$el.querySelector(".table-wrap");
-      if (!wrap) return;
-      const firstRow = this.$el.querySelector("tbody tr");
-      const rowHeight = firstRow ? firstRow.getBoundingClientRect().height : 40;
+      const wrap = this.$refs.wrap;
+      const tbody = this.$refs.tbody;
+      const thead = this.$refs.thead;
+      if (!wrap || !tbody) return;
+
+      const firstRow = tbody.querySelector("tr");
+      const rowHeight = firstRow ? firstRow.getBoundingClientRect().height : this._rowHeight || 40;
+
       const now = new Date();
       const minutesNow = now.getHours() * 60 + now.getMinutes();
+
       const targetMinutes = Math.max(0, Math.min(1439, minutesNow - 180));
       const slotIndex = Math.floor(targetMinutes / 30);
+
       const cushion = 0.5 * rowHeight;
-      const header = this.$el.querySelector("thead");
-      const headerH = header ? header.getBoundingClientRect().height : 60;
+      const headerH = thead ? thead.getBoundingClientRect().height : this._headerHeight || 60;
+
       const y = slotIndex * rowHeight - headerH - cushion;
       const maxScroll = wrap.scrollHeight - wrap.clientHeight;
+
       wrap.scrollTop = Math.max(0, Math.min(maxScroll, y));
     },
+
     updateNowLine() {
-      const wrap = this.$el.querySelector(".table-wrap");
-      const firstRow = this.$el.querySelector("tbody tr");
-      if (!wrap || !firstRow) return;
-      const rowHeight = firstRow.getBoundingClientRect().height || 40;
+      if (!this.dayInfo.isToday) return;
+
+      const tbody = this.$refs.tbody;
+      const thead = this.$refs.thead;
+      if (!tbody) return;
+
+      const firstRow = tbody.querySelector("tr");
+      const rowHeight = firstRow ? firstRow.getBoundingClientRect().height : this._rowHeight || 40;
+
       const now = new Date();
       const mins = now.getHours() * 60 + now.getMinutes();
+
       const roundedMins = mins - (mins % 30);
       const slotIndex = Math.floor(roundedMins / 30);
-      const header = this.$el.querySelector("thead");
-      const headerH = header ? header.getBoundingClientRect().height : 60;
+
+      const headerH = thead ? thead.getBoundingClientRect().height : this._headerHeight || 60;
       this.nowLineY = slotIndex * rowHeight + headerH;
     },
+
+    measureCalendarGeometry() {
+      const tbody = this.$refs.tbody;
+      const thead = this.$refs.thead;
+      const sc = this.$refs.scrollContent;
+
+      const firstRow = tbody ? tbody.querySelector("tr") : null;
+
+      if (firstRow) this._rowHeight = firstRow.getBoundingClientRect().height || 50;
+      if (thead) this._headerHeight = thead.getBoundingClientRect().height || 60;
+
+      if (sc) sc.style.setProperty("--header-h", `${this._headerHeight}px`);
+    },
+
+    subscribeToDayOccurrences() {
+      if (this._unsubOccurrences) {
+        this._unsubOccurrences();
+        this._unsubOccurrences = null;
+      }
+
+      const token = ++this._subToken;
+      const dayStart = this.dayStart;
+      const dayEnd = this.dayEnd;
+
+      const calendarId = "qrxbW04Nr4Bu2OkbwAdl";
+      const calRef = doc(db, "calendars", calendarId);
+      const occurrencesRef = collection(calRef, "occurrences");
+
+      const q = query(occurrencesRef, where("startAt", "<", dayEnd), where("endAt", ">", dayStart));
+
+      this._unsubOccurrences = onSnapshot(
+        q,
+        async (snap) => {
+          if (!this._isAlive || token !== this._subToken) return;
+
+          const occs = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .map((o) => ({
+              ...o,
+              _start: this.toDate(o.startAt),
+              _end: this.toDate(o.endAt),
+            }))
+            .sort((a, b) => a._start - b._start);
+
+          this.occurrences = occs;
+
+          await this.hydrateEventTitles(occs);
+        },
+        (err) => {
+          console.error("Error subscribing to occurrences:", err);
+        },
+      );
+    },
+
+    async hydrateEventTitles(occurrences) {
+      const needed = Array.from(
+        new Set(
+          occurrences
+            .map((o) => o.eventId)
+            .filter(Boolean)
+            .filter((id) => !this.eventsById[id]),
+        ),
+      );
+
+      if (needed.length === 0) return;
+
+      const calendarId = "qrxbW04Nr4Bu2OkbwAdl";
+      const calRef = doc(db, "calendars", calendarId);
+      const eventsRef = collection(calRef, "events");
+
+      const chunkSize = 10;
+      for (let i = 0; i < needed.length; i += chunkSize) {
+        const chunk = needed.slice(i, i + chunkSize);
+
+        const evQ = query(eventsRef, where(documentId(), "in", chunk));
+        const evSnap = await getDocs(evQ);
+
+        evSnap.forEach((evDoc) => {
+          this.eventsById[evDoc.id] = evDoc.data();
+        });
+      }
+    },
+
+    toDate(v) {
+      if (!v) return new Date(0);
+      if (v instanceof Date) return v;
+      if (typeof v?.toDate === "function") return v.toDate();
+      return new Date(v);
+    },
+
+    formatHM(d) {
+      const dt = d instanceof Date ? d : new Date(d);
+      return dt.toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    },
+
+    layoutOverlaps(items) {
+      const sorted = [...(items || [])].sort(
+        (a, b) => a._startMins - b._startMins || a._endMins - b._endMins,
+      );
+
+      const clusters = [];
+      let cluster = [];
+      let clusterEnd = -Infinity;
+
+      for (const item of sorted) {
+        if (cluster.length === 0 || item._startMins < clusterEnd) {
+          cluster.push(item);
+          clusterEnd = Math.max(clusterEnd, item._endMins);
+        } else {
+          clusters.push(cluster);
+          cluster = [item];
+          clusterEnd = item._endMins;
+        }
+      }
+      if (cluster.length) clusters.push(cluster);
+
+      for (const c of clusters) {
+        const colEnds = [];
+
+        for (const item of c) {
+          let placed = false;
+
+          for (let col = 0; col < colEnds.length; col++) {
+            if (item._startMins >= colEnds[col]) {
+              item._colIndex = col;
+              colEnds[col] = item._endMins;
+              placed = true;
+              break;
+            }
+          }
+
+          if (!placed) {
+            item._colIndex = colEnds.length;
+            colEnds.push(item._endMins);
+          }
+        }
+
+        const totalCols = colEnds.length;
+        for (const item of c) item._totalCols = totalCols;
+      }
+
+      return sorted;
+    },
   },
+
   mounted() {
+    this._isAlive = true;
+
     this.$nextTick(() => {
-      if (this.dayInfo.isToday) this.scrollToNowOffset();
-      this.updateNowLine();
-      this._nowLineTimer = setInterval(this.updateNowLine, 60_000);
+      this.measureCalendarGeometry();
+      this.subscribeToDayOccurrences();
+
+      if (this.dayInfo.isToday) {
+        this.scrollToNowOffset();
+        this.updateNowLine();
+      }
+
+      if (window.ResizeObserver) {
+        this._resizeObs = new ResizeObserver(() => {
+          this.measureCalendarGeometry();
+          if (this.dayInfo.isToday) this.updateNowLine();
+        });
+
+        if (this.$refs.wrap) this._resizeObs.observe(this.$refs.wrap);
+        if (this.$refs.thead) this._resizeObs.observe(this.$refs.thead);
+        if (this.$refs.tbody) this._resizeObs.observe(this.$refs.tbody);
+      } else {
+        // fallback
+        window.addEventListener("resize", this.measureCalendarGeometry);
+      }
+
+      this._nowLineTimer = setInterval(() => {
+        if (!this.dayInfo.isToday) return;
+        this.updateNowLine();
+      }, 60000);
     });
   },
+
   beforeUnmount() {
+    this._isAlive = false;
+
     if (this._nowLineTimer) {
       clearInterval(this._nowLineTimer);
       this._nowLineTimer = null;
+    }
+
+    if (this._unsubOccurrences) {
+      this._unsubOccurrences();
+      this._unsubOccurrences = null;
+    }
+
+    // ✅ NEW: cleanup observer / fallback listener
+    if (this._resizeObs) {
+      this._resizeObs.disconnect();
+      this._resizeObs = null;
+    } else {
+      window.removeEventListener("resize", this.measureCalendarGeometry);
     }
   },
 };
@@ -261,16 +563,7 @@ export default {
   align-items: center;
   margin-bottom: 10px;
 }
-.buttons {
-  display: flex;
-  align-items: center;
-  gap: 3rem;
-  background: none;
-  border: none;
-  font-size: 1.5em;
-  cursor: pointer;
-  color: white;
-}
+
 h1 {
   font-size: 2.5em;
   color: var(--color-text);
@@ -296,7 +589,7 @@ table {
 thead th {
   position: sticky;
   top: 0;
-  z-index: 3;
+  z-index: 6;
   background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(4px);
 }
@@ -305,7 +598,7 @@ thead th {
 .time-spacer {
   position: sticky;
   left: 0;
-  z-index: 3;
+  z-index: 7;
   width: 70px; /* same as time column width */
   min-width: 70px;
   max-width: 70px;
@@ -366,7 +659,7 @@ thead th {
 
 /* ===== Time slots ===== */
 tbody tr {
-  height: 50px; /* 48 * 40px = 1920px total; scroll to view */
+  height: 50px;
 }
 td.slot {
   position: relative;
@@ -388,7 +681,7 @@ td.today {
 thead th.today-header {
   border-bottom: 2px solid skyblue;
   background-color: skyblue;
-  font-weight: 1200;
+  font-weight: 900;
   font-size: 1.2em;
   color: black;
 }
@@ -398,14 +691,55 @@ td.slot:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.scroll-content {
+  position: relative;
+}
+
+.events-layer {
+  position: absolute;
+  top: var(--header-h);
+  left: 70px; /* align with start of day column */
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
 /* Current time horizontal line */
 .now-line {
   position: absolute;
-  left: 70px; /* width of time column */
+  left: 70px;
   right: 0;
   height: 2px;
   background: red;
-  z-index: 5;
+  z-index: 8;
   pointer-events: none;
+}
+.event-block {
+  position: absolute;
+  margin: 2px 6px;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(64, 158, 255, 0.85);
+  color: white;
+  overflow: hidden;
+  pointer-events: auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.event-title {
+  font-weight: 700;
+  font-size: 0.95em;
+  line-height: 1.1;
+}
+
+.event-time {
+  font-size: 0.8em;
+  opacity: 0.9;
+  margin-top: 4px;
+}
+
+.event-block.is-cancelled {
+  opacity: 0.45;
+  text-decoration: line-through;
 }
 </style>

@@ -1,49 +1,45 @@
 <template>
   <div class="clock">
     <div class="timeRow">
-      <h1 class="timeMain">{{ hh }}:{{ mm }}</h1>
-      <h3 class="timeSec">{{ ss }}</h3>
+      <h1 class="timeMain">{{ time.hh }}:{{ time.mm }}</h1>
+      <h3 class="timeSec">{{ time.ss }}</h3>
     </div>
-    <p class="date">{{ weekday }}, {{ day }} {{ month }}</p>
+    <p class="date">{{ time.weekday }}, {{ time.day }} {{ time.month }}</p>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 
-const hh = ref("00");
-const mm = ref("00");
-const ss = ref("00");
-const weekday = ref("");
-const day = ref("00");
-const month = ref("");
+const now = ref(new Date());
+let intervalId;
 
-let timerId;
+const time = computed(() => ({
+  hh: String(now.value.getHours()).padStart(2, "0"),
+  mm: String(now.value.getMinutes()).padStart(2, "0"),
+  ss: String(now.value.getSeconds()).padStart(2, "0"),
+  weekday: now.value.toLocaleDateString("en-GB", { weekday: "long" }),
+  day: String(now.value.getDate()).padStart(2, "0"),
+  month: now.value.toLocaleDateString("en-GB", { month: "long" }),
+}));
 
-function pad(n) {
-  return String(n).padStart(2, "0");
-}
+onMounted(() => {
+  // align first tick to the next second boundary
+  const startDelay = 1000 - now.value.getMilliseconds();
 
-function update() {
-  const now = new Date();
+  const start = () => {
+    now.value = new Date();
+    intervalId = setInterval(() => {
+      now.value = new Date();
+    }, 1000);
+  };
 
-  // Time
-  hh.value = pad(now.getHours());
-  mm.value = pad(now.getMinutes());
-  ss.value = pad(now.getSeconds());
+  setTimeout(start, startDelay);
+});
 
-  // Date
-  weekday.value = now.toLocaleDateString("en-US", { weekday: "long" });
-  day.value = now.getDate();
-  month.value = now.toLocaleDateString("en-US", { month: "long" });
-
-  // schedule next tick at the next second boundary
-  const msToNextSecond = 1000 - now.getMilliseconds();
-  timerId = setTimeout(update, msToNextSecond);
-}
-
-onMounted(update);
-onUnmounted(() => clearTimeout(timerId));
+onUnmounted(() => {
+  clearInterval(intervalId);
+});
 </script>
 
 <style scoped>

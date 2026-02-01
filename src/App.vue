@@ -4,6 +4,7 @@ import NewEventView from "./views/NewEventView.vue";
 import ClockDisplay from "./components/ClockDisplay.vue";
 import CalendarPicture from "./components/CalendarPicture.vue";
 import ShawLogoBlue from "./components/ShawLogo.vue";
+import MetOfficeWidget from "./components/MetOffice.vue";
 
 //import { RouterLink, RouterView } from 'vue-router'
 import { ref } from "vue";
@@ -30,6 +31,10 @@ async function signIn() {
   await signInWithEmailAndPassword(auth, email.value, password.value);
   alert("Signed in!");
 }
+
+const endpoint = import.meta.env.DEV
+  ? "https://us-central1-shawcalendar-ff10f.cloudfunctions.net/metofficeForecast"
+  : "/metofficeForecast";
 </script>
 
 <template>
@@ -91,7 +96,7 @@ async function signIn() {
 
 .Layout-footer {
   position: fixed;
-  top: 92%;
+  top: 93%;
   height: 50%;
   width: 96vw;
   z-index: 2;

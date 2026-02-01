@@ -10,6 +10,10 @@
       {
         "source": "**",
         "destination": "/index.html"
+      },
+      {
+        "source": "/metofficeForecast",
+        "function": "metofficeForecast"
       }
     ]
   },

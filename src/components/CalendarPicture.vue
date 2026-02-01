@@ -5,35 +5,16 @@
 <script>
 import { ref } from "vue";
 
-import LiliaDadCarry from "../assets/images/LiliaDadCarry.jpeg";
-import LiliaLokiBed from "../assets/images/LiliaLokiBed.jpeg";
-import LiliaLokiCouch from "../assets/images/LiliaLokiCouch.jpeg";
-import LiliaLokiMumPose from "../assets/images/LiliaLokiMumPose.jpeg";
-import LiliaLokiRed from "../assets/images/LiliaLokiRed.jpeg";
-import LiliaLokiSleeping from "../assets/images/LiliaLokiSleeping.jpeg";
-import LiliaLokiTummyTime from "../assets/images/LiliaLokiTummyTime.jpeg";
-import LiliaLokiTummyTime2 from "../assets/images/LiliaLokiTummyTime2.jpeg";
-import LiliaSleeping from "../assets/images/LiliaSleeping.jpeg";
-import LiliaTummyTime from "../assets/images/LiliaTummyTime.jpeg";
-import LokiBlueyPlay from "../assets/images/LokiBlueyPlay.jpg";
-import LokiDadReading from "../assets/images/LokiDadReading.jpeg";
-import LokiTiger from "../assets/images/LokiTiger.jpeg";
+const year = String(new Date().getFullYear());
 
-const images = [
-  LiliaDadCarry,
-  LiliaLokiBed,
-  LiliaLokiCouch,
-  LiliaLokiMumPose,
-  LiliaLokiRed,
-  LiliaLokiSleeping,
-  LiliaLokiTummyTime,
-  LiliaLokiTummyTime2,
-  LiliaSleeping,
-  LiliaTummyTime,
-  LokiBlueyPlay,
-  LokiDadReading,
-  LokiTiger,
-];
+const modules = import.meta.glob("../assets/images/**/*.{jpeg,jpg}", {
+  eager: true,
+  import: "default",
+});
+
+const images = Object.entries(modules)
+  .filter(([path, _]) => path.includes(`/${year}/`))
+  .map(([, src]) => src);
 
 const randomImage = ref(images[Math.floor(Math.random() * images.length)]);
 

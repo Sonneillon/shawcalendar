@@ -7,104 +7,141 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-const { setGlobalOptions } = require("firebase-functions");
 const { onRequest } = require("firebase-functions/v2/https");
+const { setGlobalOptions } = require("firebase-functions/v2");
 const logger = require("firebase-functions/logger");
 const cors = require("cors")({ origin: true });
 
 const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
 const secretClient = new SecretManagerServiceClient();
 
-//const METOFFICE_SECRET = `projects/775795543848/secrets/MetOfficeAPIKey/versions/latest`;
-const METOFFICE_SECRET = process.env.METOFFICE_SECRET_RESOURCE;
-const METOFFICE_URL = process.env.METOFFICE_URL;
+// ---- Config ----
+const METOFFICE_SECRET_RESOURCE = process.env.METOFFICE_SECRET_RESOURCE; // projects/<id>/secrets/<name>/versions/latest
+const METOFFICE_URL = process.env.METOFFICE_URL; // https://api.metoffice.gov.uk/datahub/forecast/spot
 
+// Fixed coords (Daresbury)
+const LAT = 53.333871;
+const LON = -2.641248;
+
+// Cache the API key in-memory to reduce Secret Manager calls
 let cachedApiKey = null;
 let cachedAtMs = 0;
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 mionutes
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
+// Upstream timeout (ms)
+const UPSTREAM_TIMEOUT_MS = 8000;
+
+setGlobalOptions({ maxInstances: 10 });
+
+// ---- Helpers ----
+function requireEnv(name, value) {
+  if (!value) throw new Error(`${name} environment variable is not set`);
+}
 
 async function getMetOfficeApiKey() {
   const nowMs = Date.now();
-  if (cachedApiKey && nowMs - cachedAtMs < CACHE_TTL_MS) {
-    return cachedApiKey;
-  }
+  if (cachedApiKey && nowMs - cachedAtMs < CACHE_TTL_MS) return cachedApiKey;
 
-  if (!METOFFICE_SECRET) {
-    throw new Error("METOFFICE_SECRET environment variable is not set");
-  }
+  requireEnv("METOFFICE_SECRET_RESOURCE", METOFFICE_SECRET_RESOURCE);
 
   const [version] = await secretClient.accessSecretVersion({
-    name: METOFFICE_SECRET,
+    name: METOFFICE_SECRET_RESOURCE,
   });
 
-  const key = version.payload?.data?.toString("utf8").trim();
-  if (!key) {
-    throw new Error("Failed to retrieve Met Office API key from Secret Manager");
-  }
+  const data = version?.payload?.data;
+  const key = Buffer.isBuffer(data) ? data.toString("utf8").trim() : "";
+  if (!key) throw new Error("Met Office API key secret payload was empty/unreadable");
 
   cachedApiKey = key;
   cachedAtMs = nowMs;
   return key;
 }
 
+function buildMetOfficeUrl(baseUrl, lat, lon) {
+  const url = new URL(baseUrl);
+  url.searchParams.set("latitude", String(lat));
+  url.searchParams.set("longitude", String(lon));
+  return url.toString();
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function logError(message, err, extra) {
+  logger.error(message, {
+    err: err?.message || String(err),
+    ...(extra || {}),
+  });
+}
+
+// ---- Function ----
 exports.metofficeForecast = onRequest(async (req, res) => {
   cors(req, res, async () => {
     try {
-      // Fixed coords per your request
-      const lat = 53.333871;
-      const lon = -2.641248;
-
-      if (!METOFFICE_URL) {
-        res.status(500).json({
-          error: "METOFFICE_URL environment variable is not set",
-        });
-        return;
-      }
+      requireEnv("METOFFICE_URL", METOFFICE_URL);
 
       const apiKey = await getMetOfficeApiKey();
-      const url = `${METOFFICE_URL}?key=${apiKey}&lat=${lat}&lon=${lon}`;
+      const url = buildMetOfficeUrl(METOFFICE_URL, LAT, LON);
 
-      const upstreamRes = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          "x-api-key": apiKey,
-        },
-      });
+      let upstreamRes;
+      try {
+        upstreamRes = await fetchWithTimeout(
+          url,
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+              apikey: apiKey, // DataHub uses "apikey"
+            },
+          },
+          UPSTREAM_TIMEOUT_MS,
+        );
+      } catch (err) {
+        logError("Met Office fetch failed", err);
+        res.status(502).json({ error: "Failed to reach Met Office" });
+        return;
+      }
 
       const text = await upstreamRes.text();
 
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { raw: text };
-      }
-
       if (!upstreamRes.ok) {
-        logger.error("Met Office API error", {
-          status: upstreamRes.status,
-          body: data,
-        });
+        // Don’t log body (could be large); status is enough for standard ops logging.
+        logger.error("Met Office upstream error", { status: upstreamRes.status });
         res.status(502).json({
           error: "Upstream Met Office API error",
           status: upstreamRes.status,
-          body: data,
         });
         return;
       }
 
+      let metOffice;
+      try {
+        metOffice = JSON.parse(text);
+      } catch {
+        // If upstream returns non-JSON despite 200, treat as bad gateway.
+        logger.error("Met Office returned non-JSON response");
+        res.status(502).json({ error: "Met Office returned invalid response" });
+        return;
+      }
+
+      // Standard cache headers: adjust if you want browser caching.
+      res.set("Cache-Control", "no-store");
+
       res.status(200).json({
-        latitude: lat,
-        longitude: lon,
-        metOffice: data,
+        latitude: LAT,
+        longitude: LON,
+        metOffice,
       });
-    } catch (error) {
-      logger.error("Internal error in metofficeForecast", { error });
-      res.status(500).json({
-        error: "Internal server error",
-        details: error.message,
-      });
+    } catch (err) {
+      logError("Internal error in metofficeForecast", err);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 });

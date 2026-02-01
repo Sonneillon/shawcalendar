@@ -3,7 +3,7 @@
 </template>
 
 <script setup>
-import ShawLogoBlue from "../assets/images/ShawLogoBlue.png";
+import ShawLogoBlue from "../assets/images/logo/ShawLogoBlue.png";
 </script>
 <style scoped>
 .logo {
